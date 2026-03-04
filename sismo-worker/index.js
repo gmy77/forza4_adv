@@ -468,8 +468,9 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background-
 .sv{font-size:1.35em;font-weight:700}
 #cvs{border-radius:10px;cursor:pointer;touch-action:none;max-width:100%}
 .brow{display:flex;gap:10px;justify-content:center;margin-top:10px}
-.gbtn{padding:7px 20px;border-radius:7px;border:1px solid rgba(38,198,218,.3);background:rgba(38,198,218,.1);color:#26c6da;cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:.82em}
+.gbtn{padding:7px 20px;border-radius:7px;border:1px solid rgba(38,198,218,.3);background:rgba(38,198,218,.1);color:#26c6da;cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:.82em;transition:background .1s,transform .1s}
 .gbtn:hover{background:rgba(38,198,218,.25)}
+.gbtn:active{background:rgba(38,198,218,.45);transform:scale(.96)}
 footer{margin-top:16px;font-size:.7em;color:#263238;font-family:'Share Tech Mono',monospace}
 footer a{color:#26c6da;text-decoration:none}
 </style>
@@ -490,12 +491,20 @@ footer a{color:#26c6da;text-decoration:none}
     <div class="ps" style="flex-direction:row-reverse"><div class="dot dot2"></div><div style="text-align:right"><div style="font-size:.68em;color:#546e7a">GIOCATORE 2</div><div class="sv" id="s2" style="color:#ffd600">0</div></div></div>
   </div>
   <canvas id="cvs"></canvas>
-  <div class="brow"><button class="gbtn" id="rbtn">&#8635; Nuova partita</button></div>
+  <div class="brow"><button class="gbtn" id="rbtn">&#8635; Nuova partita</button><button class="gbtn" id="mbtn">vs CPU: OFF</button></div>
   <footer>ECHO Games // <a href="/">&#8592; torna al monitor sismico</a></footer>
 </div>
-<script>(function(){
+<script>
+window.onerror=function(msg,src,line,col,err){
+  var el=document.createElement('div');
+  el.style='background:#b71c1c;color:#fff;padding:10px;border-radius:6px;font-family:monospace;font-size:12px;margin:10px 0;text-align:left';
+  el.textContent='ERRORE JS: '+msg+' (linea '+line+')';
+  document.querySelector('.wrap').insertBefore(el,document.getElementById('cvs'));
+  return true;
+};
+(function(){
 var COLS=7,ROWS=6,CELL,RAD,MX,TY,W,H;
-var board,cur,over,wcells,drp,parts,hov,sc,wt,lastT;
+var board,cur,over,wcells,drp,parts,hov,sc,wt,lastT,rf,aiMode,aiWait;
 var cvs,ctx;
 var C1='#ef5350',C1L='#ff8a80',C1D='#b71c1c';
 var C2='#ffd600',C2L='#ffff6b',C2D='#c6a700';
@@ -514,14 +523,14 @@ function by(r){return TY+r*CELL+CELL/2;}
 function reset(){
   board=[];
   for(var r=0;r<ROWS;r++){board.push([]);for(var c=0;c<COLS;c++)board[r].push(0);}
-  cur=1;over=false;wcells=[];drp=null;parts=[];hov=-1;wt=0;uiUpd();
+  cur=1;over=false;wcells=[];drp=null;parts=[];hov=-1;wt=0;rf=0.35;aiWait=false;uiUpd();
 }
 function uiUpd(){
   document.getElementById('s1').textContent=sc[0];
   document.getElementById('s2').textContent=sc[1];
   var ti=document.getElementById('ti');
-  if(over)ti.textContent=wcells.length?'Giocatore '+cur+' VINCE! \uD83C\uDFC6':'PAREGGIO!';
-  else ti.textContent='Turno: Giocatore '+cur;
+  if(over)ti.textContent=wcells.length?(aiMode&&cur===2?'Computer VINCE! \uD83E\uDD16':'Giocatore '+cur+' VINCE! \uD83C\uDFC6'):'PAREGGIO!';
+  else ti.textContent=aiMode&&cur===2?'Computer sta pensando... \uD83E\uDD16':'Turno: Giocatore '+cur;
 }
 
 function chkWin(p){
@@ -635,14 +644,16 @@ function update(dt){
       var win=chkWin(drp.pl);
       if(win){over=true;wcells=win;for(var w=0;w<win.length;w++)spawn(bx(win[w][1]),by(win[w][0]),drp.pl,18);sc[drp.pl-1]++;}
       else if(full())over=true;
-      else cur=3-drp.pl;
+      else{cur=3-drp.pl;}
       drp=null;uiUpd();
+      if(aiMode&&!over&&cur===2){aiWait=true;setTimeout(function(){aiWait=false;if(!over&&cur===2&&!drp)aiMove();},520);}
     }
   }
   for(var i=parts.length-1;i>=0;i--){
     parts[i].upd(dt);if(parts[i].life>=parts[i].ml||parts[i].sz<.5)parts.splice(i,1);
   }
   if(over&&wcells.length)wt+=dt;
+  if(rf>0)rf-=dt;
 }
 function draw(){
   ctx.clearRect(0,0,W,H);
@@ -652,6 +663,7 @@ function draw(){
   if(drp)drawPiece(bx(drp.col),drp.y,drp.pl,1);
   for(var i=0;i<parts.length;i++)parts[i].draw();
   drawEnd();
+  if(rf>0){ctx.save();ctx.globalAlpha=rf/0.35*0.45;ctx.fillStyle='#26c6da';ctx.fillRect(MX,TY-10,COLS*CELL,ROWS*CELL+20);ctx.restore();}
 }
 function loop(ts){
   var now=ts/1000,dt=Math.min(now-(lastT||now),.05);lastT=now;update(dt);draw();requestAnimationFrame(loop);
@@ -660,14 +672,62 @@ function gcol(cx){
   var rect=cvs.getBoundingClientRect(),sx=W/rect.width,mx=(cx-rect.left)*sx;
   var col=Math.floor((mx-MX)/CELL);return(col>=0&&col<COLS)?col:-1;
 }
+function sc4(w,pl){
+  var p=0,o=0,opp=pl===1?2:1,i;
+  for(i=0;i<4;i++){if(w[i]===pl)p++;else if(w[i]===opp)o++;}
+  if(o>0)return 0;if(p===4)return 100;if(p===3)return 5;if(p===2)return 2;return 0;
+}
+function bdSc(bd,pl){
+  var s=0,mid=Math.floor(COLS/2),r,c,opp=pl===1?2:1;
+  for(r=0;r<ROWS;r++)if(bd[r][mid]===pl)s+=3;
+  for(r=0;r<ROWS;r++)for(c=0;c<=COLS-4;c++){s+=sc4([bd[r][c],bd[r][c+1],bd[r][c+2],bd[r][c+3]],pl);s-=sc4([bd[r][c],bd[r][c+1],bd[r][c+2],bd[r][c+3]],opp);}
+  for(c=0;c<COLS;c++)for(r=0;r<=ROWS-4;r++){s+=sc4([bd[r][c],bd[r+1][c],bd[r+2][c],bd[r+3][c]],pl);s-=sc4([bd[r][c],bd[r+1][c],bd[r+2][c],bd[r+3][c]],opp);}
+  for(r=3;r<ROWS;r++)for(c=0;c<=COLS-4;c++){s+=sc4([bd[r][c],bd[r-1][c+1],bd[r-2][c+2],bd[r-3][c+3]],pl);s-=sc4([bd[r][c],bd[r-1][c+1],bd[r-2][c+2],bd[r-3][c+3]],opp);}
+  for(r=0;r<=ROWS-4;r++)for(c=0;c<=COLS-4;c++){s+=sc4([bd[r][c],bd[r+1][c+1],bd[r+2][c+2],bd[r+3][c+3]],pl);s-=sc4([bd[r][c],bd[r+1][c+1],bd[r+2][c+2],bd[r+3][c+3]],opp);}
+  return s;
+}
+function winOn(bd,pl){
+  var r,c;
+  for(r=0;r<ROWS;r++)for(c=0;c<=COLS-4;c++)if(bd[r][c]===pl&&bd[r][c+1]===pl&&bd[r][c+2]===pl&&bd[r][c+3]===pl)return true;
+  for(r=0;r<=ROWS-4;r++)for(c=0;c<COLS;c++)if(bd[r][c]===pl&&bd[r+1][c]===pl&&bd[r+2][c]===pl&&bd[r+3][c]===pl)return true;
+  for(r=3;r<ROWS;r++)for(c=0;c<=COLS-4;c++)if(bd[r][c]===pl&&bd[r-1][c+1]===pl&&bd[r-2][c+2]===pl&&bd[r-3][c+3]===pl)return true;
+  for(r=0;r<=ROWS-4;r++)for(c=0;c<=COLS-4;c++)if(bd[r][c]===pl&&bd[r+1][c+1]===pl&&bd[r+2][c+2]===pl&&bd[r+3][c+3]===pl)return true;
+  return false;
+}
+function vCols(bd){var v=[],c;for(c=0;c<COLS;c++)if(bd[0][c]===0)v.push(c);return v;}
+function drpBd(bd,col,pl){var nb=[],r;for(r=0;r<ROWS;r++)nb.push(bd[r].slice());for(r=ROWS-1;r>=0;r--)if(nb[r][col]===0){nb[r][col]=pl;break;}return nb;}
+function mm(bd,depth,al,be,max){
+  var v=vCols(bd),i,nb,res,mid=Math.floor(COLS/2);
+  if(winOn(bd,2))return{s:100000+depth,c:-1};
+  if(winOn(bd,1))return{s:-100000-depth,c:-1};
+  if(!v.length||!depth)return{s:bdSc(bd,2),c:-1};
+  v.sort(function(a,b){return Math.abs(a-mid)-Math.abs(b-mid);});
+  var best={s:max?-1e9:1e9,c:v[0]};
+  for(i=0;i<v.length;i++){
+    nb=drpBd(bd,v[i],max?2:1);res=mm(nb,depth-1,al,be,!max);
+    if(max?res.s>best.s:res.s<best.s)best={s:res.s,c:v[i]};
+    if(max)al=Math.max(al,best.s);else be=Math.min(be,best.s);
+    if(al>=be)break;
+  }
+  return best;
+}
+function aiMove(){var res=mm(board,6,-1e9,1e9,true);dropPiece(res.c);}
+aiMode=false;aiWait=false;
+sc=[0,0];initCvs();reset();
 cvs.addEventListener('mousemove',function(e){hov=gcol(e.clientX);});
 cvs.addEventListener('mouseleave',function(){hov=-1;});
-cvs.addEventListener('click',function(e){if(!over){var c=gcol(e.clientX);if(c>=0)dropPiece(c);}});
-cvs.addEventListener('touchstart',function(e){e.preventDefault();if(!over){var c=gcol(e.touches[0].clientX);if(c>=0)dropPiece(c);}},{passive:false});
+cvs.addEventListener('click',function(e){if(!over&&!(aiMode&&(cur===2||aiWait))){var c=gcol(e.clientX);if(c>=0)dropPiece(c);}});
+cvs.addEventListener('touchstart',function(e){e.preventDefault();if(!over&&!(aiMode&&(cur===2||aiWait))){var c=gcol(e.touches[0].clientX);if(c>=0)dropPiece(c);}},{passive:false});
 document.addEventListener('keydown',function(e){if(e.key==='r'||e.key==='R')reset();});
 document.getElementById('rbtn').addEventListener('click',reset);
-
-sc=[0,0];initCvs();reset();requestAnimationFrame(loop);
+document.getElementById('mbtn').addEventListener('click',function(){
+  aiMode=!aiMode;
+  this.textContent=aiMode?'vs CPU: ON \uD83E\uDD16':'vs CPU: OFF';
+  this.style.color=aiMode?'#69f0ae':'#26c6da';
+  this.style.borderColor=aiMode?'rgba(105,240,174,.4)':'rgba(38,198,218,.3)';
+  reset();
+});
+requestAnimationFrame(loop);
 })();
 </script>
 </body>
