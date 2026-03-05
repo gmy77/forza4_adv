@@ -1,21 +1,32 @@
-MIT License
+COPYRIGHT NOTICE - TUTTI I DIRITTI RISERVATI
+=============================================
 
-Copyright (c) 2026 Gimmy
+Copyright (c) 2026 Gimmy Pignolo
+Progetto: Forza 4 - ECHO Games
+Sito:     https://sismo-fvg.gimmy077.workers.dev/forza4
+Autore:   Gimmy Pignolo (gmy77 su GitHub)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+LICENZA PROPRIETARIA - ALL RIGHTS RESERVED
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Questo software e tutto il codice sorgente contenuto in questo repository
+sono di proprieta' esclusiva di Gimmy Pignolo.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+E' ESPRESSAMENTE VIETATO:
+- Copiare, riprodurre o distribuire il codice, anche parzialmente
+- Modificare il codice e ridistribuirlo con qualsiasi nome o forma
+- Utilizzare il codice o parti di esso in altri progetti, commerciali o personali
+- Fare reverse engineering della versione offuscata/compilata
+
+SONO CONSENTITI:
+- Visualizzare e studiare il codice per uso personale ed educativo
+- Clonare il repository per uso privato e non ridistribuibile
+- Segnalare bug o problemi tramite GitHub Issues
+
+Per richieste di licenza, collaborazione o uso commerciale:
+contattare l'autore tramite GitHub: https://github.com/gmy77
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY ARISING FROM USE OF THIS SOFTWARE.
+
+Versione: 1.0 - Marzo 2026
