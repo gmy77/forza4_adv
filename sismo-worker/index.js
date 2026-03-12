@@ -9,18 +9,19 @@ const NOAA_KP     = "https://services.swpc.noaa.gov/json/planetary_k_index_1m.js
 const NOAA_WIND   = "https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json";
 const UPDATE_SECRET = "mira755colo";
 
-const FVG = { lat_min:45.5, lat_max:46.8, lon_min:12.4, lon_max:14.1 };
+const FVG     = { lat_min:45.5, lat_max:46.8, lon_min:12.4, lon_max:14.1 };
+const FLEGREI = { lat_min:40.4, lat_max:41.1, lon_min:13.7, lon_max:14.8 };
 
 // ============================================================
 // INGV
 // ============================================================
-async function fetchINGV(giorni = 2) {
+async function fetchINGV(giorni = 2, zona = FVG) {
   const end   = new Date();
   const start = new Date(end - giorni * 86400000);
   const fmt   = d => d.toISOString().slice(0,19);
   const url   = `${INGV_URL}?format=geojson&starttime=${fmt(start)}&endtime=${fmt(end)}&minmagnitude=0.5`
-              + `&minlatitude=${FVG.lat_min}&maxlatitude=${FVG.lat_max}`
-              + `&minlongitude=${FVG.lon_min}&maxlongitude=${FVG.lon_max}&orderby=time`;
+              + `&minlatitude=${zona.lat_min}&maxlatitude=${zona.lat_max}`
+              + `&minlongitude=${zona.lon_min}&maxlongitude=${zona.lon_max}&orderby=time`;
   const res   = await fetch(url, { headers:{"User-Agent":"SismoFVG/2.0 gimmycloud.com"} });
   if (!res.ok) throw new Error(`INGV ${res.status}`);
   if (res.status === 204) return [];
@@ -40,20 +41,23 @@ async function fetchINGV(giorni = 2) {
   });
 }
 
-async function salvaEventi(db, eventi) {
+async function salvaEventi(db, eventi, table = "terremoti") {
   let nuovi = 0;
   for (const e of eventi) {
     const r = await db.prepare(
-      `INSERT OR IGNORE INTO terremoti (event_id,data_ora,magnitudine,latitudine,longitudine,profondita,localita)
+      `INSERT OR IGNORE INTO ${table} (event_id,data_ora,magnitudine,latitudine,longitudine,profondita,localita)
        VALUES (?,?,?,?,?,?,?)`
     ).bind(e.id,e.data_ora,e.magnitudine,e.latitudine,e.longitudine,e.profondita,e.localita).run();
     if (r.meta.changes > 0) nuovi++;
   }
-  const { results } = await db.prepare("SELECT COUNT(*) as n FROM terremoti").all();
-  const totale = results[0].n;
-  await db.prepare("INSERT INTO fetch_log (data_fetch,nuovi,totale) VALUES (?,?,?)")
-    .bind(new Date().toISOString(), nuovi, totale).run();
-  return { nuovi, totale };
+  if (table === "terremoti") {
+    const { results } = await db.prepare("SELECT COUNT(*) as n FROM terremoti").all();
+    const totale = results[0].n;
+    await db.prepare("INSERT INTO fetch_log (data_fetch,nuovi,totale) VALUES (?,?,?)")
+      .bind(new Date().toISOString(), nuovi, totale).run();
+    return { nuovi, totale };
+  }
+  return { nuovi };
 }
 
 // ============================================================
@@ -107,7 +111,7 @@ async function salvaSolare(db, kpData) {
 // DATI PER DASHBOARD
 // ============================================================
 async function getDashboardData(db) {
-  const [ultimi, stats, mensile, top, solare30, kpMax7] = await Promise.all([
+  const [ultimi, stats, mensile, top, solare30, kpMax7, fl_ultimi, fl_stats] = await Promise.all([
     db.prepare("SELECT * FROM terremoti ORDER BY data_ora DESC LIMIT 100").all(),
     db.prepare("SELECT COUNT(*) as totale, MAX(magnitudine) as max_mag, AVG(magnitudine) as avg_mag, MIN(data_ora) as primo FROM terremoti").all(),
     db.prepare(`SELECT strftime('%Y-%m', data_ora) as mese, COUNT(*) as n, MAX(magnitudine) as max_m
@@ -118,23 +122,36 @@ async function getDashboardData(db) {
                 WHERE time_tag >= datetime('now','-30 days')
                 GROUP BY giorno ORDER BY giorno ASC`).all(),
     db.prepare(`SELECT MAX(kp_index) as kp_max FROM dati_solari WHERE time_tag >= datetime('now','-7 days')`).all(),
+    db.prepare("SELECT * FROM terremoti_flegrei ORDER BY data_ora DESC LIMIT 50").all().catch(()=>({results:[]})),
+    db.prepare("SELECT COUNT(*) as totale, MAX(magnitudine) as max_mag FROM terremoti_flegrei").all().catch(()=>({results:[{}]})),
   ]);
 
-  const sismi30 = await db.prepare(`
-    SELECT date(data_ora) as giorno, COUNT(*) as n, MAX(magnitudine) as mag_max
-    FROM terremoti
-    WHERE data_ora >= datetime('now','-30 days')
-    GROUP BY giorno ORDER BY giorno ASC
-  `).all();
+  const [sismi30, fl30] = await Promise.all([
+    db.prepare(`
+      SELECT date(data_ora) as giorno, COUNT(*) as n, MAX(magnitudine) as mag_max
+      FROM terremoti
+      WHERE data_ora >= datetime('now','-30 days')
+      GROUP BY giorno ORDER BY giorno ASC
+    `).all(),
+    db.prepare(`
+      SELECT date(data_ora) as giorno, COUNT(*) as n, MAX(magnitudine) as mag_max
+      FROM terremoti_flegrei
+      WHERE data_ora >= datetime('now','-30 days')
+      GROUP BY giorno ORDER BY giorno ASC
+    `).all().catch(()=>({results:[]})),
+  ]);
 
   return {
-    ultimi:   ultimi.results,
-    stats:    stats.results[0],
-    mensile:  mensile.results,
-    top:      top.results,
-    solare30: solare30.results,
-    sismi30:  sismi30.results,
-    kpMax7:   kpMax7.results[0],
+    ultimi:      ultimi.results,
+    stats:       stats.results[0],
+    mensile:     mensile.results,
+    top:         top.results,
+    solare30:    solare30.results,
+    sismi30:     sismi30.results,
+    kpMax7:      kpMax7.results[0],
+    fl_ultimi:   fl_ultimi.results,
+    fl_stats:    fl_stats.results[0],
+    fl30:        fl30.results,
   };
 }
 
@@ -150,7 +167,7 @@ const kpLabel  = k => k>=7?'TEMPESTA FORTE':k>=5?'TEMPESTA MODERATA':k>=4?'ATTIV
 // HTML DASHBOARD v2
 // ============================================================
 function renderDashboard(data, ingvStatus) {
-  const { ultimi, stats, mensile, top, solare30, sismi30, kpMax7 } = data;
+  const { ultimi, stats, mensile, top, solare30, sismi30, kpMax7, fl_ultimi, fl_stats, fl30 } = data;
   const now = new Date().toLocaleString("it-IT",{timeZone:"Europe/Rome"});
 
   const ultiRows = ultimi.slice(0,50).map(e => {
@@ -201,14 +218,15 @@ function renderDashboard(data, ingvStatus) {
     return `<rect x="${x}" y="${H_KP-h}" width="${barW}" height="${h}" fill="${c}" rx="2" opacity="0.9"/>`;
   }).join("");
 
+  const sisoYBase = H_KP+GAP+H_SISMO;
   const sismoBars = allDays.map((day,i)=>{
     const s=sismiMap[day]||{n:0,mag:0};
     const h=s.n>0?Math.max(4,Math.round((s.n/maxN)*H_SISMO)):0;
     const x=PAD+i*((W-PAD*2)/nDays);
-    const yBase=H_KP+GAP+H_SISMO;
     const c=s.mag>=3?'#ff6d00':s.mag>=2?'#ffd600':'#26c6da';
-    return h>0?`<rect x="${x}" y="${yBase-h}" width="${barW}" height="${h}" fill="${c}" rx="2" opacity="0.85"/>`:'' ;
+    return h>0?`<rect x="${x}" y="${sisoYBase-h}" width="${barW}" height="${h}" fill="${c}" rx="2" opacity="0.85"/>`:'' ;
   }).join("");
+  const sisoBaseline = `<line x1="${PAD}" y1="${sisoYBase}" x2="${W-PAD}" y2="${sisoYBase}" stroke="rgba(105,240,174,.25)" stroke-width="1"/>`;
 
   const xLabels = allDays.filter((_,i)=>i%5===0||i===allDays.length-1).map(day=>{
     const idx=allDays.indexOf(day);
@@ -232,6 +250,44 @@ function renderDashboard(data, ingvStatus) {
     <text x="${x+bW2/2}" y="${bH-h-3}" text-anchor="middle" fill="#78909c" font-size="8">${m.n}</text></g>`;
   }).join("");
   const svgMW=mensile.length*(bW2+3)||480;
+
+  // ── Campi Flegrei / Area Napoletana ──────────────────────────
+  const flTotale  = fl_stats?.totale || 0;
+  const flMaxMag  = parseFloat(fl_stats?.max_mag) || 0;
+  const flRecenti = (fl30||[]).reduce((s,r)=>s+parseInt(r.n||0),0);
+
+  const FL_W=780, FL_H=80, FL_PAD=44;
+  const flDays = [...(fl30||[])].map(r=>r.giorno).sort();
+  const flNDays = flDays.length||1;
+  const flBarW  = Math.max(2, Math.floor((FL_W-FL_PAD*2)/flNDays)-2);
+  const flMax   = Math.max(...(fl30||[]).map(r=>parseInt(r.n)||0), 1);
+  const flMap   = Object.fromEntries((fl30||[]).map(r=>[r.giorno,{n:parseInt(r.n)||0,mag:parseFloat(r.mag_max)||0}]));
+
+  const flBars = flDays.map((day,i)=>{
+    const s=flMap[day]||{n:0,mag:0};
+    const h=s.n>0?Math.max(4,Math.round((s.n/flMax)*FL_H)):0;
+    const x=FL_PAD+i*((FL_W-FL_PAD*2)/flNDays);
+    const c=s.mag>=4?'#ff1744':s.mag>=3?'#ff6d00':s.mag>=2?'#ffd600':'#ff7043';
+    return h>0?`<rect x="${x}" y="${FL_H-h}" width="${flBarW}" height="${h}" fill="${c}" rx="2" opacity="0.85"/>`:'' ;
+  }).join("");
+  const flLabels = flDays.filter((_,i)=>i%5===0||i===flDays.length-1).map(day=>{
+    const idx=flDays.indexOf(day);
+    const x=FL_PAD+idx*((FL_W-FL_PAD*2)/flNDays)+flBarW/2;
+    return `<text x="${x}" y="${FL_H+16}" text-anchor="middle" fill="#455a64" font-size="9" font-family="monospace">${day.slice(5)}</text>`;
+  }).join("");
+  const flBaseline=`<line x1="${FL_PAD}" y1="${FL_H}" x2="${FL_W-FL_PAD}" y2="${FL_H}" stroke="rgba(255,112,67,.3)" stroke-width="1"/>`;
+
+  const flRows = (fl_ultimi||[]).slice(0,20).map(e=>{
+    const d=new Date(e.data_ora);
+    const dIT=d.toLocaleString("it-IT",{timeZone:"Europe/Rome",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    const m=e.magnitudine;
+    return `<tr style="background:${magBg(m)};border-bottom:1px solid rgba(255,255,255,.04)">
+      <td style="padding:9px 14px;font-weight:700;color:${magColor(m)};font-size:1.1em;font-family:'Share Tech Mono',monospace">M${m.toFixed(1)}</td>
+      <td style="padding:9px 14px;color:#cfd8dc;font-size:.83em">${dIT}</td>
+      <td style="padding:9px 14px;color:#eceff1">${e.localita}</td>
+      <td style="padding:9px 14px;color:#90a4ae;font-size:.83em">${e.profondita?e.profondita.toFixed(1)+'km':'—'}</td>
+    </tr>`;
+  }).join("");
 
   const coincRows = coincidenze.length===0
     ? '<p style="color:#455a64;font-size:.85em;font-family:\'Share Tech Mono\',monospace">Nessuna coincidenza nei dati disponibili. I dati solari si accumulano ad ogni aggiornamento.</p>'
@@ -351,7 +407,8 @@ ${(()=>{if(!ingvStatus||ingvStatus.online===false){const lc=ingvStatus&&ingvStat
       <text x="${PAD}" y="11" fill="#26c6da" font-size="10" font-family="monospace" font-weight="700">☀ SOLARE — Kp index (max/giorno)</text>
       ${kpBars}
       <line x1="${PAD}" y1="${H_KP+GAP/2}" x2="${W-PAD}" y2="${H_KP+GAP/2}" stroke="rgba(255,255,255,.05)" stroke-width="1" stroke-dasharray="4,4"/>
-      <text x="${PAD}" y="${H_KP+GAP+11}" fill="#69f0ae" font-size="10" font-family="monospace" font-weight="700">🌍 SISMICITÀ FVG — eventi/giorno</text>
+      <text x="${PAD}" y="${H_KP+GAP-6}" fill="#69f0ae" font-size="10" font-family="monospace" font-weight="700">🌍 SISMICITÀ FVG — eventi/giorno</text>
+      ${sisoBaseline}
       ${sismoBars}
       ${xLabels}
       <text x="${W-PAD+5}" y="${H_KP}" fill="#455a64" font-size="8" font-family="monospace">${maxKp.toFixed(0)}</text>
@@ -383,6 +440,59 @@ ${(()=>{if(!ingvStatus||ingvStatus.online===false){const lc=ingvStatus&&ingvStat
         Significatività statistica aumenta con l'accumulo dei dati.
       </div>
     </div>
+  </div>
+</div>
+
+<!-- AREA NAPOLETANA — CAMPI FLEGREI / VESUVIO / ISCHIA -->
+<div class="panel" style="margin-top:24px;border-color:rgba(255,87,34,.35)">
+  <div class="panel-header" style="border-bottom-color:rgba(255,87,34,.2)">
+    <span>🌋 <span style="color:#ff5722">AREA NAPOLETANA</span> — Campi Flegrei · Vesuvio · Ischia</span>
+    <span style="color:#455a64;font-size:.78em;font-family:'Share Tech Mono',monospace">lat 40.4–41.1 · lon 13.7–14.8</span>
+  </div>
+  <div class="panel-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px">
+      <div style="background:rgba(255,87,34,.08);border:1px solid rgba(255,87,34,.2);border-radius:10px;padding:14px 18px">
+        <div style="color:#78909c;font-size:.72em;font-family:'Share Tech Mono',monospace;margin-bottom:4px">🌋 TOTALE EVENTI</div>
+        <div style="font-size:2em;font-weight:800;color:#ff5722;font-family:'Share Tech Mono',monospace">${flTotale}</div>
+        <div style="color:#546e7a;font-size:.72em;margin-top:2px">nel database</div>
+      </div>
+      <div style="background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.2);border-radius:10px;padding:14px 18px">
+        <div style="color:#78909c;font-size:.72em;font-family:'Share Tech Mono',monospace;margin-bottom:4px">⚡ MAG. MASSIMA</div>
+        <div style="font-size:2em;font-weight:800;color:${magColor(flMaxMag)};font-family:'Share Tech Mono',monospace">${flMaxMag?'M'+flMaxMag.toFixed(1):'—'}</div>
+        <div style="color:#546e7a;font-size:.72em;margin-top:2px">evento più forte</div>
+      </div>
+      <div style="background:rgba(255,214,0,.05);border:1px solid rgba(255,214,0,.15);border-radius:10px;padding:14px 18px">
+        <div style="color:#78909c;font-size:.72em;font-family:'Share Tech Mono',monospace;margin-bottom:4px">📅 ULTIMI 30 GG</div>
+        <div style="font-size:2em;font-weight:800;color:#ffd600;font-family:'Share Tech Mono',monospace">${flRecenti}</div>
+        <div style="color:#546e7a;font-size:.72em;margin-top:2px">eventi totali</div>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <svg width="100%" viewBox="0 0 ${FL_W} ${FL_H+22}" style="overflow:visible;min-width:520px">
+        ${flBaseline}
+        ${flBars}
+        ${flLabels}
+        ${flDays.length===0?`<text x="${FL_W/2}" y="${FL_H/2+4}" text-anchor="middle" fill="#455a64" font-size="11" font-family="monospace">nessun dato — aggiorna per popolare</text>`:''}
+      </svg>
+    </div>
+    <div style="display:flex;gap:18px;margin-top:6px;font-size:.7em;font-family:'Share Tech Mono',monospace;flex-wrap:wrap;color:#546e7a">
+      <span><span style="color:#ff1744">■</span> M≥4</span>
+      <span><span style="color:#ff6d00">■</span> M≥3</span>
+      <span><span style="color:#ffd600">■</span> M≥2</span>
+      <span><span style="color:#ff7043">■</span> M&lt;2</span>
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:16px;border-color:rgba(255,87,34,.2)">
+  <div class="panel-header" style="border-bottom-color:rgba(255,87,34,.15)">
+    <span>🌋 <span style="color:#ff5722">Ultimi 20 eventi</span> — Area Napoletana ≥ M0.5</span>
+  </div>
+  <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Mag</th><th>Data/Ora</th><th>Località</th><th>Profondità</th></tr></thead>
+      <tbody>${flRows||'<tr><td colspan="4" style="padding:20px;color:#455a64;text-align:center">Nessun dato. <a href="/update?token=mira755colo" style="color:#26c6da">Aggiorna →</a></td></tr>'}</tbody>
+    </table>
   </div>
 </div>
 
@@ -519,12 +629,23 @@ export default {
 
     if (!db) return new Response(JSON.stringify({error:"DB binding non trovato"}),{status:500,headers:{"Content-Type":"application/json"}});
 
-    // Crea tabella solari se non esiste
-    const initDB = () => db.prepare(`CREATE TABLE IF NOT EXISTS dati_solari (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      time_tag TEXT UNIQUE NOT NULL,
-      kp_index REAL
-    )`).run();
+    // Crea tabelle se non esistono
+    const initDB = async () => {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS dati_solari (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        time_tag TEXT UNIQUE NOT NULL,
+        kp_index REAL
+      )`).run();
+      await db.prepare(`CREATE TABLE IF NOT EXISTS terremoti_flegrei (
+        event_id TEXT PRIMARY KEY,
+        data_ora TEXT,
+        magnitudine REAL,
+        latitudine REAL,
+        longitudine REAL,
+        profondita REAL,
+        localita TEXT
+      )`).run();
+    };
 
     if (url.pathname === "/update-solar") {
       if (url.searchParams.get("token") !== UPDATE_SECRET) return new Response("Non autorizzato 🔒",{status:401});
@@ -546,16 +667,20 @@ export default {
       try {
         await initDB();
         const giorni = parseInt(url.searchParams.get("giorni"))||3;
-        let eventi = [], ingvOffline = false;
+        let eventi = [], eventiFL = [], ingvOffline = false;
         try {
-          eventi = await fetchINGV(giorni);
+          [eventi, eventiFL] = await Promise.all([
+            fetchINGV(giorni, FVG),
+            fetchINGV(giorni, FLEGREI),
+          ]);
           if (env.F4_LEARN) await env.F4_LEARN.put("ingv_status", JSON.stringify({online:true, last_check:new Date().toISOString()}));
         } catch(ingvErr) {
           ingvOffline = true;
           if (env.F4_LEARN) await env.F4_LEARN.put("ingv_status", JSON.stringify({online:false, last_error:ingvErr.message, last_check:new Date().toISOString()}));
         }
         let nuovi = 0;
-        if (eventi.length > 0) ({ nuovi } = await salvaEventi(db, eventi));
+        if (eventi.length > 0) ({ nuovi } = await salvaEventi(db, eventi, "terremoti"));
+        if (eventiFL.length > 0) await salvaEventi(db, eventiFL, "terremoti_flegrei");
         const solare = await fetchSolare();
         if (solare.kpData.length>0) await salvaSolare(db, solare.kpData);
         return Response.redirect(url.origin+"/?updated="+nuovi+(ingvOffline?"&ingv_offline=1":""), 302);
@@ -643,16 +768,29 @@ export default {
         time_tag TEXT UNIQUE NOT NULL,
         kp_index REAL
       )`).run();
-      let eventi = [];
+      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS terremoti_flegrei (
+        event_id TEXT PRIMARY KEY,
+        data_ora TEXT,
+        magnitudine REAL,
+        latitudine REAL,
+        longitudine REAL,
+        profondita REAL,
+        localita TEXT
+      )`).run();
+      let eventi = [], eventiFL = [];
       try {
-        eventi = await fetchINGV(2);
+        [eventi, eventiFL] = await Promise.all([
+          fetchINGV(2, FVG),
+          fetchINGV(2, FLEGREI),
+        ]);
         if (env.F4_LEARN) await env.F4_LEARN.put("ingv_status", JSON.stringify({online:true, last_check:new Date().toISOString()}));
       } catch(ingvErr) {
         if (env.F4_LEARN) await env.F4_LEARN.put("ingv_status", JSON.stringify({online:false, last_error:ingvErr.message, last_check:new Date().toISOString()}));
         console.error("INGV offline:", ingvErr.message);
       }
       const solare = await fetchSolare();
-      if (eventi.length>0) await salvaEventi(env.DB, eventi);
+      if (eventi.length>0) await salvaEventi(env.DB, eventi, "terremoti");
+      if (eventiFL.length>0) await salvaEventi(env.DB, eventiFL, "terremoti_flegrei");
       if (solare.kpData.length>0) await salvaSolare(env.DB, solare.kpData);
     } catch(e) {
       console.error("Cron error:", e.message);
